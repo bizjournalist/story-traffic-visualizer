@@ -1,0 +1,319 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Story Traffic Visualizer</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; background-color: #fafafa; color: #333; }
+    .app-container { display: flex; height: 100vh; padding: 20px; box-sizing: border-box; }
+    .sidebar { width: 300px; background: #fff; border: 1px solid #ccc; border-radius: 6px; padding: 15px; box-sizing: border-box; overflow-y: auto; flex-shrink: 0; }
+    .main-content { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; margin-left: 20px; box-sizing: border-box; overflow: hidden; }
+    .upload-section { text-align: center; margin-bottom: 20px; }
+    .upload-section label { font-size: 16px; font-weight: bold; }
+    .upload-section small { display: block; color: #666; margin-top: 5px; }
+    .filters { margin-bottom: 20px; }
+    .filters h3 { margin-top: 0; text-align: center; color: #4f81bd; }
+    .filter-inputs { display: flex; flex-direction: column; gap: 15px; }
+    .filter-inputs label { font-size: 14px; }
+    .thresholds-row { display: flex; gap: 10px; }
+    .threshold-input { flex: 1; display: flex; flex-direction: column; }
+    .filter-inputs input, .filter-inputs select { padding: 8px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; outline: none; width: 100%; box-sizing: border-box; }
+    .filter-inputs input:focus, .filter-inputs select:focus { border-color: #4f81bd; }
+    .market-filter-wrapper { display: none; /* DISABLED MARKET UI */ }
+    .market-filters { max-height: 120px; overflow-y: auto; padding-left: 10px; border: 1px solid #ddd; border-radius: 4px; }
+    .market-filters div { margin-bottom: 4px; }
+    .reset-btn { background-color: #f48d61; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; margin: 15px auto 0; display: block; transition: background-color 0.2s; }
+    .reset-btn:hover { background-color: #e07a4b; }
+    .loading { text-align: center; color: #4f81bd; font-size: 16px; display: none; margin-bottom: 10px; }
+    .chart-title { font-size: 22px; font-weight: bold; text-align: center; margin-bottom: 10px; color: #4f81bd; }
+    .stats-container { display: flex; justify-content: space-around; padding: 10px 0; background: #fff; border-top: 1px solid #ddd; font-size: 14px; color: #333; }
+    .stats-item { text-align: center; }
+    .stats-item .label { font-weight: bold; color: #4f81bd; display: block; }
+    #scatterplot { flex: 1 1 auto; min-height: 0; position: relative; background: #f9f9f9; border: 1px solid #ccc; border-radius: 6px; overflow: auto; }
+    .axis-label { font-size: 14px; font-weight: bold; fill: #4f81bd; }
+    .tooltip { position: absolute; text-align: left; padding: 8px; font-size: 14px; background: #fff; border: 1px solid #ccc; border-radius: 6px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); color: #333; pointer-events: none; }
+    circle { fill: #69b3a2; stroke: #4f81bd; opacity: 0.8; transition: all 0.2s ease; }
+    circle:hover { stroke-width: 2px; stroke: #333; r: 10; }
+    .grid line { stroke: #e0e0e0; stroke-opacity: 0.7; }
+    .grid path { stroke-width: 0; }
+    @media (max-width: 768px) { .app-container { flex-direction: column; } .sidebar { width: 100%; margin-bottom: 20px; } .main-content { margin-left: 0; } }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <div class="sidebar">
+      <div class="upload-section">
+        <label for="fileInput">Upload Your Data File</label>
+        <input type="file" id="fileInput" />
+        <small>Supported formats: CSV, XLSX, or XLS</small>
+      </div>
+      <div class="filters">
+        <h3>Filters</h3>
+        <div class="filter-inputs">
+          <div>
+            <label for="yAxisSelect">Y-Axis Metric:</label>
+            <select id="yAxisSelect">
+              <option value="percent">Percent Member Visits</option>
+              <option value="member">Member Visits</option>
+              <option value="conversions">Conversions</option>
+            </select>
+          </div>
+          <div>
+            <label for="headlineInput">Headline Keyword:</label>
+            <input type="text" id="headlineInput" placeholder="Enter keyword" />
+          </div>
+          <div class="thresholds-row">
+            <div class="threshold-input">
+              <label for="minThresholdInput">Visits Min:</label>
+              <input type="number" id="minThresholdInput" value="100" min="0" />
+            </div>
+            <div class="threshold-input">
+              <label for="maxThresholdInput">Visits Max:</label>
+              <input type="number" id="maxThresholdInput" placeholder="No max" min="0" />
+            </div>
+          </div>
+          <div>
+            <label for="startDateInput">Start Date:</label>
+            <input type="date" id="startDateInput" />
+          </div>
+          <div>
+            <label for="endDateInput">End Date:</label>
+            <input type="date" id="endDateInput" />
+          </div>
+          <div id="marketFilterWrapper" class="market-filter-wrapper">
+            <label>Market:</label>
+            <div class="market-filters" id="marketCheckboxes"></div>
+          </div>
+        </div>
+        <button class="reset-btn" id="resetFilters">Reset Filters</button>
+      </div>
+    </div>
+    <div class="main-content">
+      <div class="chart-title" id="chartTitle">Story Visits</div>
+      <div class="loading" id="loadingIndicator">Loading data, please wait...</div>
+      <div id="scatterplot"></div>
+      <div class="stats-container" id="statsContainer">
+        <div class="stats-item"><span class="label">Count</span><span id="statCount">–</span></div>
+        <div class="stats-item"><span class="label">Avg Visits</span><span id="statAvgVisits">–</span></div>
+        <div class="stats-item"><span class="label">Avg Members</span><span id="statAvgMembers">–</span></div>
+        <div class="stats-item"><span class="label">Avg Conversions</span><span id="statAvgConv">–</span></div>
+        <div class="stats-item"><span class="label">Avg % Members</span><span id="statAvgPct">–</span></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const formatDate = d3.timeFormat("%B %d, %Y"),
+          formatNumber = d3.format(",");
+
+    // Global data cache variable
+    let globalData = [];
+
+    function parseReleaseDate(d) {
+      let v = d["Release Date"];
+      if (v instanceof Date) return v;
+      if (typeof v === "number") return new Date((v - 25569) * 86400 * 1000);
+      let p = new Date(v);
+      return isNaN(p.getTime()) ? null : p;
+    }
+
+    function debounce(f, d) {
+      let t;
+      return () => { clearTimeout(t); t = setTimeout(f, d); };
+    }
+
+    // Updated readFileAndUpdate caches file data and populates markets only on first load.
+    function readFileAndUpdate() {
+      const fi = document.getElementById('fileInput');
+      if (!fi.files.length) return;
+      document.getElementById('loadingIndicator').style.display = 'block';
+
+      const file = fi.files[0],
+            reader = new FileReader(),
+            ext = file.name.split('.').pop().toLowerCase();
+      reader.onload = e => {
+        let raw;
+        if (ext === 'xlsx' || ext === 'xls') {
+          const data = new Uint8Array(e.target.result),
+                wb = XLSX.read(data, { type: 'array' }),
+                ws = wb.Sheets[wb.SheetNames[0]];
+          raw = XLSX.utils.sheet_to_json(ws, { cellDates: true });
+        } else {
+          raw = d3.csvParse(e.target.result);
+        }
+        // Only populate the markets if globalData is empty (first load)
+        if (globalData.length === 0) {
+          populateMarkets(raw);
+        }
+        globalData = raw;
+        updateScatterplot(globalData);
+        document.getElementById('loadingIndicator').style.display = 'none';
+      };
+      ext === 'xlsx' || ext === 'xls' ? reader.readAsArrayBuffer(file) : reader.readAsText(file);
+    }
+
+    // Use cached globalData for filter changes
+    const debouncedUpdate = debounce(() => {
+      if (globalData.length) {
+        updateScatterplot(globalData);
+      }
+    }, 300);
+
+    document.getElementById('fileInput').addEventListener('change', readFileAndUpdate);
+    document.querySelectorAll('.filter-inputs input, .filter-inputs select').forEach(el => el.addEventListener('input', debouncedUpdate));
+    document.getElementById('yAxisSelect').addEventListener('change', debouncedUpdate);
+
+    // Update reset button to use the cached data instead of reloading the file
+    document.getElementById('resetFilters').addEventListener('click', () => {
+      ['minThresholdInput','maxThresholdInput','startDateInput','endDateInput','headlineInput'].forEach(id => document.getElementById(id).value = '');
+      document.querySelectorAll('#marketCheckboxes input').forEach(cb => cb.checked = true);
+      document.getElementById('minThresholdInput').value = 100;
+      document.getElementById('yAxisSelect').value = 'percent';
+      if (globalData.length) {
+        updateScatterplot(globalData);
+      }
+    });
+
+    function populateMarkets(data) {
+      // filter out null/empty values
+      const rawMarkets = data.map(d => d.Market).filter(m => m != null && m !== '');
+      const markets = Array.from(new Set(rawMarkets)).sort();
+      const wrapper = d3.select('#marketFilterWrapper');
+      const container = d3.select('#marketCheckboxes').html('');
+      if (markets.length <= 1) {
+        wrapper.style('display', 'none');
+      } else {
+        wrapper.style('display', 'block');
+        markets.forEach(m => {
+          const safe = m.replace(/\s+/g, '_');
+          const id = 'market-' + safe;
+          const div = container.append('div');
+          div.append('input')
+             .attr('type', 'checkbox')
+             .attr('id', id)
+             .attr('value', m)
+             .property('checked', true)
+             .on('change', debouncedUpdate);
+          div.append('label')
+             .attr('for', id)
+             .text(m);
+        });
+      }
+    }
+
+    function updateScatterplot(data) {
+      // Parse the release dates for filtering
+      data.forEach(d => d._releaseDate = parseReleaseDate(d));
+      const minT = +document.getElementById('minThresholdInput').value,
+            maxVal = document.getElementById('maxThresholdInput').value,
+            maxT = maxVal ? +maxVal : Infinity,
+            start = new Date(document.getElementById('startDateInput').value),
+            end   = new Date(document.getElementById('endDateInput').value),
+            kw    = document.getElementById('headlineInput').value.toLowerCase(),
+            yOpt  = document.getElementById('yAxisSelect').value;
+      let yField, yLabel;
+      if (yOpt === 'member') { yField = 'Member Visits'; yLabel = 'Member Visits'; }
+      else if (yOpt === 'conversions') { yField = 'Conversions'; yLabel = 'Conversions'; }
+      else { yField = 'Percent member visits'; yLabel = 'Percent Member Visits'; }
+
+      // ---- MARKET FILTER DISABLED FOR PRODUCTION ----
+// Original code:
+// const allMarkets = Array.from(new Set(data.map(d => d.Market).filter(m => m != null && m !== '')));
+//       const applyMarket = allMarkets.length > 1;
+//       let selectedMarkets = allMarkets;
+//       if (applyMarket) {
+//         selectedMarkets = Array.from(document.querySelectorAll('#marketCheckboxes input:checked')).map(cb => cb.value);
+//       }
+// 
+//       
+const applyMarket = false;
+let selectedMarkets = [];
+const filtered = data.filter(d => {
+        d.Visits = d.Visits ? +d.Visits.toString().replace(/,/g,'') : 0;
+        d['Member Visits'] = d['Member Visits'] ? +d['Member Visits'].toString().replace(/,/g,'') : 0;
+        d.Conversions = +d.Conversions || 0;
+        d['Percent member visits'] = d.Visits ? (d['Member Visits'] / d.Visits) * 100 : 0;
+        return d.Visits >= minT && d.Visits <= maxT
+            && (isNaN(start) ? true : d._releaseDate >= start)
+            && (isNaN(end) ? true : d._releaseDate <= end)
+            && (!applyMarket || selectedMarkets.includes(d.Market));
+      });
+
+      // Summary statistics
+      const cnt = filtered.length,
+            sumV = d3.sum(filtered, d => d.Visits),
+            sumM = d3.sum(filtered, d => d['Member Visits']),
+            sumC = d3.sum(filtered, d => d.Conversions),
+            sumP = d3.sum(filtered, d => d['Percent member visits']),
+            avgV = cnt ? sumV / cnt : 0,
+            avgM = cnt ? sumM / cnt : 0,
+            avgC = cnt ? sumC / cnt : 0,
+            avgP = cnt ? sumP / cnt : 0;
+      document.getElementById('statCount').textContent = formatNumber(cnt);
+      document.getElementById('statAvgVisits').textContent = formatNumber(avgV.toFixed(0));
+      document.getElementById('statAvgMembers').textContent = formatNumber(avgM.toFixed(0));
+      document.getElementById('statAvgConv').textContent = formatNumber(avgC.toFixed(1));
+      document.getElementById('statAvgPct').textContent = avgP.toFixed(1) + '%';
+
+      const range = getDateRange(filtered);
+      document.getElementById('chartTitle').textContent = `Story Visits: ${range.startDate} to ${range.endDate}`;
+      const showMarket = applyMarket;
+      createScatterplot(filtered, kw, yField, yLabel, showMarket);
+    }
+
+    function getDateRange(data) {
+      const ds = data.map(d => d._releaseDate).filter(d => d instanceof Date);
+      if (!ds.length) return { startDate: 'Invalid Date', endDate: 'Invalid Date' };
+      return { startDate: formatDate(d3.min(ds)), endDate: formatDate(d3.max(ds)) };
+    }
+
+    function createScatterplot(data, kw, yField, yLabel, showMarket) {
+      const m = { top: 20, right: 30, bottom: 50, left: 60 },
+            cont = document.getElementById('scatterplot'),
+            minW = 600, minH = 400,
+            cW = Math.max(cont.clientWidth, minW),
+            cH = Math.max(cont.clientHeight, minH),
+            w = cW - m.left - m.right,
+            h = cH - m.top - m.bottom;
+      d3.select('#scatterplot').selectAll('*').remove();
+      const svg = d3.select('#scatterplot').append('svg')
+        .attr('width', '100%').attr('height', '100%')
+        .attr('viewBox', `0 0 ${cW} ${cH}`)
+        .attr('preserveAspectRatio', 'xMidYMid meet')
+        .call(d3.zoom().scaleExtent([0.5, 20]).on('zoom', zoomed))
+        .append('g').attr('transform', `translate(${m.left},${m.top})`);
+      const x = d3.scaleLinear().domain([0, d3.max(data, d => d.Visits)]).nice().range([0, w]);
+      const y = d3.scaleLinear().domain([0, d3.max(data, d => d[yField])]).nice().range([h, 0]);
+      const xAxis = svg.append('g').attr('transform', `translate(0,${h})`).call(d3.axisBottom(x));
+      const yAxis = svg.append('g').call(d3.axisLeft(y));
+      svg.append('text').attr('class', 'axis-label').attr('text-anchor', 'end').attr('x', w).attr('y', h + m.top + 20).text('Visits');
+      svg.append('text').attr('class', 'axis-label').attr('text-anchor', 'end').attr('transform', 'rotate(-90)').attr('y', -m.left + 20).attr('x', -m.top).text(yLabel);
+      svg.append('g').attr('class', 'grid').attr('transform', `translate(0,${h})`).call(d3.axisBottom(x).tickSize(-h).tickFormat(''));
+      svg.append('g').attr('class', 'grid').call(d3.axisLeft(y).tickSize(-w).tickFormat(''));
+      const dots = svg.append('g').selectAll('circle').data(data).enter().append('circle')
+        .attr('cx', d => x(d.Visits)).attr('cy', d => y(d[yField])).attr('r', 7)
+        .style('fill', '#69b3a2').style('opacity', 0.7).style('stroke', 'black');
+      dots.style('fill', d => kw && d.Headline.toLowerCase().includes(kw) ? '#f48d61' : '#69b3a2');
+      const tooltip = d3.select('body').append('div').attr('class', 'tooltip').style('opacity', 0);
+      dots.on('mouseover', (event, d) => {
+        tooltip.transition().duration(200).style('opacity', 0.9);
+        let html = `<strong>Headline:</strong> ${d.Headline}<br>
+          <strong>Visits:</strong> ${formatNumber(d.Visits)}<br>
+          <strong>Member Visits:</strong> ${formatNumber(d['Member Visits'])}<br>
+          <strong>Conversions:</strong> ${formatNumber(d.Conversions)}<br>`;
+        if (showMarket && d.Market != null) html += `<strong>Market:</strong> ${d.Market}<br>`;
+        html += `<strong>Release Date:</strong> ${d._releaseDate ? formatDate(d._releaseDate) : 'Invalid Date'}`;
+        tooltip.html(html).style('left', (event.pageX + 5) + 'px').style('top', (event.pageY - 28) + 'px');
+      }).on('mouseout', () => tooltip.transition().duration(500).style('opacity', 0));
+      function zoomed(e) {
+        const t = e.transform, nx = t.rescaleX(x), ny = t.rescaleY(y);
+        xAxis.call(d3.axisBottom(nx)); yAxis.call(d3.axisLeft(ny));
+        dots.attr('cx', d => nx(d.Visits)).attr('cy', d => ny(d[yField]));
+      }
+    }
+  </script>
+</body>
+</html>
