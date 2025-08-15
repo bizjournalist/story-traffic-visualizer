@@ -58,7 +58,7 @@
             <label for="yAxisSelect">Y-Axis Metric:</label>
             <select id="yAxisSelect">
               <option value="percent">Percent Member Visits</option>
-              <option value="member">Member Visits</option>
+              <option value="member" selected>Member Visits</option>
               <option value="conversions">Conversions</option>
             </select>
           </div>
@@ -171,7 +171,7 @@
       ['minThresholdInput','maxThresholdInput','startDateInput','endDateInput','headlineInput'].forEach(id => document.getElementById(id).value = '');
       document.querySelectorAll('#marketCheckboxes input').forEach(cb => cb.checked = true);
       document.getElementById('minThresholdInput').value = 100;
-      document.getElementById('yAxisSelect').value = 'percent';
+      document.getElementById('yAxisSelect').value = 'member';
       if (globalData.length) {
         updateScatterplot(globalData);
       }
